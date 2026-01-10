@@ -3,6 +3,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      - CLEAN_RIGHT_ANSWERS=true
     volumes:
       - ./db.sqlite:/app/db.sqlite
       - ./images:/data/images

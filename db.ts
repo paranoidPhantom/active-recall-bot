@@ -195,6 +195,16 @@ export function getQuestions(studyKey: string, page: number, pageSize: number = 
   return { questions, total, totalPages: Math.ceil(total / pageSize) };
 }
 
+export function getAllQuestionsRaw() {
+  const query = db.query("SELECT id, study_key, question_text, options, correct_index FROM questions");
+  return query.all() as { id: number, study_key: string, question_text: string, options: string, correct_index: number }[];
+}
+
+export function updateQuestionOptions(id: number, options: string[], correctIndex: number) {
+  const query = db.query("UPDATE questions SET options = $options, correct_index = $correctIndex WHERE id = $id");
+  query.run({ $id: id, $options: JSON.stringify(options), $correctIndex: correctIndex });
+}
+
 export function deleteQuestion(questionId: number) {
   db.run("DELETE FROM questions WHERE id = $id", { $id: questionId });
   db.run("DELETE FROM votes WHERE question_id = $id", { $id: questionId });

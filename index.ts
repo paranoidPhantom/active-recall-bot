@@ -470,6 +470,54 @@ async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | und
     });
 }
 
+// Startup Logic for cleaning right answers
+if (process.env.CLEAN_RIGHT_ANSWERS === "true") {
+    console.log("🔄 Starting answer shuffle process...");
+    try {
+        const questions = db.getAllQuestionsRaw();
+        console.log(`Found ${questions.length} questions to process.`);
+        
+        for (const q of questions) {
+            let options: string[];
+            try {
+                options = JSON.parse(q.options);
+            } catch (e) {
+                console.error(`Failed to parse options for question ${q.id}`, e);
+                continue;
+            }
+
+            const correctAnswer = options[q.correct_index];
+            
+            // Fisher-Yates shuffle
+            for (let i = options.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [options[i], options[j]] = [options[j], options[i]];
+            }
+
+            const newCorrectIndex = options.indexOf(correctAnswer);
+            
+            if (newCorrectIndex === -1) {
+                console.error(`Correct answer lost for question ${q.id}`);
+                continue;
+            }
+
+            db.updateQuestionOptions(q.id, options, newCorrectIndex);
+
+            // Regenerate image
+            try {
+                const imageBuffer = await renderQuestionToImage(q.question_text, options);
+                await imageStorage.saveQuestionImage(q.id, imageBuffer);
+                if (q.id % 10 === 0) console.log(`Processed question ${q.id}...`);
+            } catch (e) {
+                console.error(`Failed to regenerate image for question ${q.id}`, e);
+            }
+        }
+        console.log("✅ Finished shuffling answers and regenerating images.");
+    } catch (error) {
+        console.error("Error during answer shuffle:", error);
+    }
+}
+
 bot.start();
 
 function escapeHtml(unsafe: string): string {
