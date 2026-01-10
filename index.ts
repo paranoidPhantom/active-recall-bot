@@ -1,0 +1,495 @@
+import { Bot, InlineKeyboard } from "gramio";
+import * as db from "./db";
+import * as ai from "./ai";
+
+const token = process.env.BOT_TOKEN;
+const adminId = parseInt(process.env.ADMIN_ID || "0");
+
+if (!token) {
+    console.error("Error: BOT_TOKEN environment variable is not set.");
+    console.error("Please create a .env file with BOT_TOKEN=your_token_here");
+    process.exit(1);
+}
+
+const bot = new Bot(token)
+    // Middleware to check auth and save username
+    .use(async (context, next) => {
+        if (!context.from?.id) return;
+        
+        // Save username map if present
+        if (context.from.username) {
+            db.saveUsername(context.from.id, context.from.username);
+        }
+
+        // Authentication logic relaxed:
+        // Everyone can use /study, /ask.
+        // Only admins/trusted can ADD questions (handle text messages).
+        return next();
+    })
+
+    .command("add", (context) => {
+        if (context.from?.id !== adminId) return; // Double check admin
+        const args = context.text?.split(" ") || [];
+        const target = args[1];
+        if (!target) return context.send("Использование: /add <uid|@username>");
+
+        let targetId: number | null = null;
+        if (target.startsWith("@")) {
+            targetId = db.getUserIdByUsername(target);
+        } else {
+            targetId = parseInt(target);
+        }
+
+        if (!targetId || isNaN(targetId)) {
+            return context.send("Неверный ID пользователя или неизвестное имя пользователя (пользователь должен сначала запустить бота).");
+        }
+
+        db.setTrusted(targetId, true);
+        return context.send(`Пользователь ${targetId} теперь доверенный. ✅`);
+    })
+
+    .command("remove", (context) => {
+        if (context.from?.id !== adminId) return;
+        const args = context.text?.split(" ") || [];
+        const target = args[1];
+        if (!target) return context.send("Использование: /remove <uid|@username>");
+
+        let targetId: number | null = null;
+        if (target.startsWith("@")) {
+            targetId = db.getUserIdByUsername(target);
+        } else {
+            targetId = parseInt(target);
+        }
+
+        if (!targetId || isNaN(targetId)) {
+            return context.send("Неверный ID пользователя или неизвестное имя пользователя.");
+        }
+
+        db.setTrusted(targetId, false);
+        return context.send(`Пользователь ${targetId} больше не доверенный. ❌`);
+    })
+
+    .command("start", (context) => {
+        const userId = context.from?.id;
+        if (!userId) return;
+
+        const keys = db.getAllStudyKeys();
+        
+        // If there are existing keys, pick the first one as default
+        if (keys.length > 0) {
+            db.setUserStudyKey(userId, keys[0]);
+        }
+
+        const keyboard = new InlineKeyboard();
+        // Pagination could be needed if many keys, but simple list for now
+        keys.forEach(key => {
+            keyboard.text(key, `study_select:${key}`).row();
+        });
+
+        const isTrusted = db.isTrusted(userId) || userId === adminId;
+        const trustedMsg = isTrusted ? "\n\n🔑 *Вы доверенный пользователь.*\n• Используйте /study <тема> для переключения или создания темы.\n• Отправляйте текст или заметки, чтобы добавить вопросы в текущую тему.\n• Управляйте вопросами через /view и /clean." : "";
+
+        const welcomeMsg = keys.length > 0 
+            ? `Добро пожаловать! \nТема по умолчанию: *${keys[0]}*.\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
+            : `Добро пожаловать! Темы не найдены. \nЕсли вы админ, используйте /study <тема> и отправьте текст для создания вопросов.${trustedMsg}`;
+
+        return context.send(welcomeMsg, { reply_markup: keyboard, parse_mode: "Markdown" });
+    })
+    
+    .command("study", (context) => {
+        const key = context.text?.split(" ").slice(1).join(" ");
+        if (!key) {
+            return context.send("Пожалуйста укажите тему. Использование: /study <тема>");
+        }
+        db.setUserStudyKey(context.from?.id || 0, key);
+        return context.send(`Тема установлена: ${key}. Отправьте мне текст/заметки для генерации вопросов!`);
+    })
+
+    .command("clean", (context) => {
+        const userId = context.from?.id;
+        if (!userId) return;
+
+        // AUTH CHECK FOR CLEANING - STRICTLY ADMIN ONLY
+        if (userId !== adminId) {
+            return context.send("Эта команда доступна только главному администратору.");
+        }
+
+        const studyKey = db.getUserStudyKey(userId);
+        if (!studyKey) {
+            return context.send("Вы еще не выбрали тему. Используйте /study <тема> сначала.");
+        }
+
+        const keyboard = new InlineKeyboard()
+            .text("Да, удалить все", `clean:${studyKey}:confirm`)
+            .text("Отмена", `clean:${studyKey}:cancel`);
+
+        return context.send(`Вы уверены, что хотите удалить ВСЕ вопросы по теме '${studyKey}'?`, { reply_markup: keyboard });
+    })
+
+    .command("view", async (context) => {
+        const userId = context.from?.id;
+        if (!userId) return;
+
+        // AUTH CHECK
+        const isTrusted = db.isTrusted(userId) || userId === adminId;
+        if (!isTrusted) return context.send("У вас нет прав просматривать список вопросов.");
+
+        const studyKey = db.getUserStudyKey(userId);
+        if (!studyKey) return context.send("Тема не выбрана. Используйте /study <тема>.");
+
+        await sendQuestionsList(context, studyKey, 1);
+    })
+
+    .command("ask", (context) => sendRandomQuestion(bot, context.chat.id, context.from?.id))
+
+    .on("message", async (context) => {
+        if (!context.text) return;
+        
+        // Ignore commands (starting with /)
+        if (context.text.startsWith("/")) return;
+
+        const userId = context.from?.id;
+        if (!userId) return;
+
+        // AUTH CHECK FOR ADDING QUESTIONS
+        const isTrusted = db.isTrusted(userId) || userId === adminId;
+        if (!isTrusted) {
+            return context.send("У вас нет прав добавлять новые вопросы. Вы можете только учить существующие темы.");
+        }
+
+        const studyKey = db.getUserStudyKey(userId);
+        if (!studyKey) {
+            return context.send("Вы еще не выбрали тему. Используйте /study <тема> сначала.");
+        }
+
+        const msg = await context.send(`Анализирую текст для темы '${studyKey}'... ⏳`);
+        
+        try {
+            const questions = await ai.generateQuestions(context.text, studyKey);
+            
+            if (questions.length === 0) {
+                // GramIO send returns the message object, but edit might be on context or we need to use bot.api
+                // The issue is likely the type returned by context.send vs what we expect.
+                // In GramIO, we might need to use the API directly to edit if the returned object doesn't have helpers.
+                // Or simply send a new message. For now, let's just send a new message to be safe.
+                return context.send("Не удалось сгенерировать вопросы из этого текста. Попробуйте добавить больше деталей.");
+            }
+
+            for (const q of questions) {
+                db.saveQuestion(studyKey, q.question, q.options, q.correct_index);
+            }
+
+            // Remove the "Analyzing..." message
+            try {
+                await bot.api.deleteMessage({
+                    chat_id: msg.chat.id,
+                    message_id: msg.id
+                });
+            } catch (e) {
+                // Ignore if unable to delete
+            }
+
+            return context.send(`✅ Сохранено ${questions.length} новых вопросов для темы '${studyKey}'. Используйте /ask для тренировки!`);
+        } catch (e) {
+            console.error(e);
+            return context.send("Ошибка генерации вопросов. Пожалуйста попробуйте снова.");
+        }
+    })
+
+    .on("callback_query", async (context) => {
+        const data = context.data;
+        if (!data) return;
+
+        // Clean confirmation handler
+        if (data.startsWith("clean:")) {
+            const parts = data.split(":");
+            const studyKey = parts[1];
+            const action = parts[2];
+
+            if (action === "confirm") {
+                db.clearQuestions(studyKey);
+                await context.answer({ text: "Вопросы удалены." });
+                if (context.message) {
+                    try {
+                        await bot.api.editMessageText({
+                            chat_id: context.message.chat.id,
+                            message_id: context.message.id, // GramIO maps message_id to id
+                            text: `🗑️ Все вопросы по теме '${studyKey}' были удалены.`
+                        });
+                    } catch (e) {
+                        console.error("Error editing message:", e);
+                    }
+                }
+            } else {
+                await context.answer({ text: "Отменено." });
+                if (context.message) {
+                    try {
+                        await bot.api.editMessageText({
+                            chat_id: context.message.chat.id,
+                            message_id: context.message.id, // GramIO maps message_id to id
+                            text: `Операция отменена. Вопросы по теме '${studyKey}' сохранены.`
+                        });
+                    } catch (e) {
+                        console.error("Error editing message:", e);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Study selection handler
+        if (data.startsWith("study_select:")) {
+            const key = data.split(":")[1];
+            if (key) {
+                db.setUserStudyKey(context.from?.id || 0, key);
+                await context.answer({ text: `Выбрано: ${key}` });
+                
+                if (context.message) {
+                    try {
+                        await bot.api.editMessageText({
+                            chat_id: context.message.chat.id,
+                            message_id: context.message.id,
+                            text: `✅ Тема установлена: *${key}*\n\nИспользуйте /ask чтобы начать тренировку!`,
+                            parse_mode: "Markdown"
+                        });
+                    } catch (e) { console.error(e); }
+                }
+            }
+            return;
+        }
+
+        // View pagination and delete handler
+        // page:<studyKey>:<page>
+        if (data.startsWith("page:")) {
+            const parts = data.split(":");
+            const studyKey = parts[1];
+            const page = parseInt(parts[2]);
+            await sendQuestionsList(context, studyKey, page, true); // edit mode
+            return;
+        }
+
+        // del:<questionId>:<studyKey>:<page>
+        if (data.startsWith("del:")) {
+            const userId = context.from?.id;
+            if (userId !== adminId) {
+                 await context.answer({ text: "Только администратор может удалять вопросы.", show_alert: true });
+                 return;
+            }
+
+            const parts = data.split(":");
+            const qId = parseInt(parts[1]);
+            const studyKey = parts[2];
+            const page = parseInt(parts[3]);
+            
+            db.deleteQuestion(qId);
+            await context.answer({ text: "Вопрос удален." });
+            await sendQuestionsList(context, studyKey, page, true);
+            return;
+        }
+
+        // format: q:<question_id>:<selected_index>
+        if (data.startsWith("vote:")) {
+            const parts = data.split(":");
+            // vote:questionId:up/down
+            const questionId = parseInt(parts[1]);
+            const voteType = parts[2];
+            const userId = context.from?.id;
+
+            if (userId && !isNaN(questionId)) {
+                db.addVote(userId, questionId, voteType === "up");
+                const stats = db.getQuestionStats(questionId);
+                const totalVotes = stats.thumbs_up + stats.thumbs_down;
+                const rating = totalVotes > 0 ? Math.round((stats.thumbs_up / totalVotes) * 100) : 0;
+                
+                await context.answer({ text: voteType === "up" ? "Спасибо за лайк! 👍" : "Спасибо за отзыв. 👎" });
+                
+                if (context.message) {
+                   try {
+                       // Update text with new stats and remove buttons
+                       const currentText = context.message.text || "";
+                       // Try to preserve the question text. Usually it's "✅ Question ... \n\nCorrect! ..."
+                       // We can just reconstruct it or regex replace the rating line.
+                       // Simpler: assume the format we set in "q:" handler.
+                       // "✅ " + qText + "\n\nОтвет правильный! Рейтинг: 👍 ${up} / 👎 ${down}"
+                       
+                       // Let's just grab the question text from the message by stripping the footer?
+                       // Or just replace the footer.
+                       const lines = currentText.split("\n\n");
+                       const questionPart = lines[0]; // "✅ Question..."
+                       
+                       await bot.api.editMessageText({
+                           chat_id: context.message.chat.id,
+                           message_id: context.message.id,
+                           text: `${questionPart}\n\nОтвет правильный! Рейтинг: ${rating}%\nВы проголосовали: ${voteType === "up" ? "👍" : "👎"}`,
+                           reply_markup: new InlineKeyboard() // empty
+                       });
+                   } catch (e) {
+                       console.error("Error editing vote message:", e);
+                   }
+                }
+            }
+            return;
+        }
+
+        // Answer callback handler
+        const parts = data.split(":");
+        // format: q:<question_id>:<correct_index>:<selected_index>
+        if (parts[0] === "q" && parts.length === 4) {
+            const questionId = parseInt(parts[1]);
+            const correctIndex = parseInt(parts[2]);
+            const selectedIndex = parseInt(parts[3]);
+            const message = context.message;
+            
+            if (!message) return;
+
+            if (selectedIndex === correctIndex) {
+                await context.answer({ text: "Правильно! 🎉" });
+                
+                const stats = db.getQuestionStats(questionId);
+                const totalVotes = stats.thumbs_up + stats.thumbs_down;
+                const rating = totalVotes > 0 ? Math.round((stats.thumbs_up / totalVotes) * 100) : 0;
+
+                const voteKeyboard = new InlineKeyboard()
+                    .text(`👍 (${stats.thumbs_up})`, `vote:${questionId}:up`)
+                    .text(`👎 (${stats.thumbs_down})`, `vote:${questionId}:down`);
+
+                try {
+                    await bot.api.editMessageText({
+                        chat_id: message.chat.id,
+                        message_id: message.id,
+                        text: "✅ " + (message.text || "Вопрос") + `\n\nОтвет правильный! Рейтинг: ${rating}%`,
+                        reply_markup: voteKeyboard
+                    });
+                } catch (e) {
+                    console.error("Error editing message:", e);
+                }
+
+                // Ask new question
+                const chatId = message.chat.id;
+                const userId = context.from?.id;
+                await sendRandomQuestion(bot, chatId, userId);
+            } else {
+                await context.answer({ text: "Неверно! Попробуйте еще раз. ❌" });
+                
+                // Remove the clicked button
+                const currentKeyboard = message.reply_markup?.inline_keyboard;
+                if (currentKeyboard) {
+                    const newKeyboard = new InlineKeyboard();
+                    
+                     for (const row of currentKeyboard) {
+                        const keptButtons = row.filter(btn => btn.callback_data !== data);
+                        if (keptButtons.length > 0) {
+                            newKeyboard.row();
+                            for (const btn of keptButtons) {
+                                newKeyboard.text(btn.text, btn.callback_data || "ignore");
+                            }
+                        }
+                    }
+                    
+                    try {
+                         await bot.api.editMessageText({
+                            chat_id: message.chat.id,
+                            message_id: message.id,
+                            text: message.text || "Вопрос",
+                            reply_markup: newKeyboard
+                        });
+                    } catch (e) {
+                        console.error("Failed to edit message", e);
+                    }
+                }
+            }
+            return;
+        }
+    })
+
+    .onStart(({ info }) => console.log(`Bot ${info.username} started!`));
+
+
+// Helper to send a question
+async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | undefined) {
+    if (!userId) return;
+
+    const studyKey = db.getUserStudyKey(userId);
+    if (!studyKey) {
+        return bot.api.sendMessage({ chat_id: chatId, text: "Тема не выбрана. Используйте /study <тема>." });
+    }
+
+    const question = db.getRandomQuestion(studyKey, userId);
+    if (!question) {
+        return bot.api.sendMessage({ chat_id: chatId, text: `Вопросов по теме '${studyKey}' не найдено. Отправьте мне текст для генерации (если есть права)!` });
+    }
+
+    const keyboard = new InlineKeyboard();
+    question.options.forEach((opt, idx) => {
+        // payload: q:<question_id>:<correct_index>:<this_index>
+        keyboard.text(opt, `q:${question.id}:${question.correct_index}:${idx}`).row();
+    });
+
+    return bot.api.sendMessage({
+        chat_id: chatId,
+        text: question.question_text,
+        reply_markup: keyboard
+    });
+}
+
+bot.start();
+
+function escapeHtml(unsafe: string): string {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+async function sendQuestionsList(context: any, studyKey: string, page: number, isEdit = false) {
+    const { questions, total, totalPages } = db.getQuestions(studyKey, page, 5);
+    
+    if (questions.length === 0 && page > 1) {
+        // Fallback to previous page if current is empty (e.g. after deleting last item)
+        return sendQuestionsList(context, studyKey, page - 1, isEdit);
+    }
+    
+    if (questions.length === 0) {
+        const text = `В теме '${studyKey}' пока нет вопросов.`;
+        if (isEdit) return context.message && bot.api.editMessageText({ chat_id: context.message.chat.id, message_id: context.message.id, text });
+        return context.send(text);
+    }
+
+    let text = `📋 <b>Вопросы по теме '${escapeHtml(studyKey)}'</b> (Стр. ${page}/${totalPages}):\n\n`;
+    const keyboard = new InlineKeyboard();
+
+    questions.forEach((q) => {
+        const options = JSON.parse(q.options) as string[];
+        const correct = options[q.correct_index];
+        text += `🔹 <b>${q.id}</b>: ${escapeHtml(q.question_text)}\n✅ <b>Ответ</b>: ${escapeHtml(correct)} (👍${q.thumbs_up}/👎${q.thumbs_down})\n\n`;
+    });
+
+    // Add delete buttons grid
+    let rowCount = 0;
+    questions.forEach((q) => {
+        keyboard.text(`🗑 ${q.id}`, `del:${q.id}:${studyKey}:${page}`);
+        rowCount++;
+        if (rowCount % 4 === 0) keyboard.row(); // 4 buttons per row
+    });
+    if (rowCount % 4 !== 0) keyboard.row();
+
+    // Navigation
+    if (page > 1) keyboard.text("⬅️ Назад", `page:${studyKey}:${page - 1}`);
+    if (page < totalPages) keyboard.text("Вперед ➡️", `page:${studyKey}:${page + 1}`);
+
+    if (isEdit && context.message) {
+        try {
+            await bot.api.editMessageText({
+                chat_id: context.message.chat.id,
+                message_id: context.message.id,
+                text,
+                reply_markup: keyboard,
+                parse_mode: "HTML"
+            });
+        } catch (e) { console.error(e); }
+    } else {
+        await context.send(text, { reply_markup: keyboard, parse_mode: "HTML" });
+    }
+}
