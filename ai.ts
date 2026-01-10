@@ -35,7 +35,10 @@ INPUT HANDLING:
 - The user text may be partially malformed, contain "garbage" characters, or be copy-pasted LaTeX that lost formatting.
 - Do your best to interpret the intended meaning and reconstruct valid concepts.
 - If the text is completely unintelligible, return an empty array.
-- It is OK to use LaTeX notation (e.g., $x^2$, $\\sum$) in the questions and options if appropriate and correct.
+- FORMAT: Use LaTeX notation for ALL mathematical, scientific, or technical symbols/formulas.
+- PREFER inline math (enclosed in \`$\`) for variables and short expressions to keep them inside the sentence structure.
+- Use display math (enclosed in \`$$\`) ONLY for large, standalone equations that need their own line.
+- You can use standard LaTeX commands (\\frac, \\sum, etc.).
 
 CRITICAL: Since these questions will be reviewed randomly later, they must be SELF-CONTAINED.
 - DO NOT use words like "this theory", "the text", "here", "above".

@@ -1,6 +1,7 @@
-import { Bot, InlineKeyboard } from "gramio";
+import { Bot, InlineKeyboard, MediaUpload } from "gramio";
 import * as db from "./db";
 import * as ai from "./ai";
+import { renderQuestionToImage } from "./renderer";
 
 const token = process.env.BOT_TOKEN;
 const adminId = parseInt(process.env.ADMIN_ID || "0");
@@ -317,10 +318,10 @@ const bot = new Bot(token)
                        const lines = currentText.split("\n\n");
                        const questionPart = lines[0]; // "✅ Question..."
                        
-                       await bot.api.editMessageText({
+                       await bot.api.editMessageCaption({
                            chat_id: context.message.chat.id,
                            message_id: context.message.id,
-                           text: `${questionPart}\n\nОтвет правильный! Рейтинг: ${rating}%\nВы проголосовали: ${voteType === "up" ? "👍" : "👎"}`,
+                           caption: `✅ Правильно!\n\nРейтинг: ${rating}%\nВы проголосовали: ${voteType === "up" ? "👍" : "👎"}`,
                            reply_markup: new InlineKeyboard() // empty
                        });
                    } catch (e) {
@@ -354,10 +355,11 @@ const bot = new Bot(token)
                     .text(`👎 (${stats.thumbs_down})`, `vote:${questionId}:down`);
 
                 try {
-                    await bot.api.editMessageText({
+                    // Show correct letter
+                    await bot.api.editMessageCaption({
                         chat_id: message.chat.id,
                         message_id: message.id,
-                        text: "✅ " + (message.text || "Вопрос") + `\n\nОтвет правильный! Рейтинг: ${rating}%`,
+                        caption: `✅ Правильно! (Ответ: ${String.fromCharCode(65 + correctIndex)})\n\nРейтинг: ${rating}%`,
                         reply_markup: voteKeyboard
                     });
                 } catch (e) {
@@ -387,10 +389,9 @@ const bot = new Bot(token)
                     }
                     
                     try {
-                         await bot.api.editMessageText({
+                         await bot.api.editMessageReplyMarkup({
                             chat_id: message.chat.id,
                             message_id: message.id,
-                            text: message.text || "Вопрос",
                             reply_markup: newKeyboard
                         });
                     } catch (e) {
@@ -419,15 +420,27 @@ async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | und
         return bot.api.sendMessage({ chat_id: chatId, text: `Вопросов по теме '${studyKey}' не найдено. Отправьте мне текст для генерации (если есть права)!` });
     }
 
+    const options = question.options; // Already parsed by db.getRandomQuestion
+    let imageBuffer: Buffer;
+    try {
+        imageBuffer = await renderQuestionToImage(question.question_text, options);
+    } catch (e) {
+        console.error("Failed to render image:", e);
+        return bot.api.sendMessage({ chat_id: chatId, text: "Ошибка при рендеринге вопроса." });
+    }
+
     const keyboard = new InlineKeyboard();
-    question.options.forEach((opt, idx) => {
+    // Use A, B, C... buttons
+    options.forEach((_, idx) => {
+        const letter = String.fromCharCode(65 + idx); // A, B, C...
         // payload: q:<question_id>:<correct_index>:<this_index>
-        keyboard.text(opt, `q:${question.id}:${question.correct_index}:${idx}`).row();
+        keyboard.text(letter, `q:${question.id}:${question.correct_index}:${idx}`);
+        if ((idx + 1) % 4 === 0) keyboard.row(); // Max 4 per row
     });
 
-    return bot.api.sendMessage({
+    return bot.api.sendPhoto({
         chat_id: chatId,
-        text: question.question_text,
+        photo: MediaUpload.buffer(imageBuffer, "question.png"),
         reply_markup: keyboard
     });
 }
