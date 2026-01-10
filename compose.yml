@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - CLEAN_RIGHT_ANSWERS=true
+      - CLEAN_RIGHT_ANSWERS=false
     volumes:
       - ./db.sqlite:/app/db.sqlite
       - ./images:/data/images
