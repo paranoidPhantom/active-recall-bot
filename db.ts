@@ -101,17 +101,20 @@ export function getAllStudyKeys(): string[] {
   return results.map(r => r.study_key);
 }
 
-export function saveQuestion(studyKey: string, question: string, options: string[], correctIndex: number) {
+export function saveQuestion(studyKey: string, question: string, options: string[], correctIndex: number): number {
   const query = db.query(`
     INSERT INTO questions (study_key, question_text, options, correct_index)
     VALUES ($studyKey, $question, $options, $correctIndex)
+    RETURNING id
   `);
-  query.run({
+  const result = query.get({
     $studyKey: studyKey,
     $question: question,
     $options: JSON.stringify(options),
     $correctIndex: correctIndex
-  });
+  }) as { id: number };
+  
+  return result.id;
 }
 
 export function clearQuestions(studyKey: string) {

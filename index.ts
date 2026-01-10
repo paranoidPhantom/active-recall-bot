@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, MediaUpload } from "gramio";
 import * as db from "./db";
 import * as ai from "./ai";
+import * as imageStorage from "./imageStorage";
 import { renderQuestionToImage } from "./renderer";
 
 const token = process.env.BOT_TOKEN;
@@ -177,7 +178,15 @@ const bot = new Bot(token)
             }
 
             for (const q of questions) {
-                db.saveQuestion(studyKey, q.question, q.options, q.correct_index);
+                const questionId = db.saveQuestion(studyKey, q.question, q.options, q.correct_index);
+                // Pre-generate and save image
+                try {
+                    const imageBuffer = await renderQuestionToImage(q.question, q.options);
+                    await imageStorage.saveQuestionImage(questionId, imageBuffer);
+                } catch (imgError) {
+                    console.error(`Failed to generate image for question ${questionId}:`, imgError);
+                    // We continue, so the question is saved, but image might be missing (fallback will handle it)
+                }
             }
 
             // Remove the "Analyzing..." message
@@ -283,6 +292,8 @@ const bot = new Bot(token)
             const page = parseInt(parts[3]);
             
             db.deleteQuestion(qId);
+            imageStorage.deleteQuestionImage(qId).catch(err => console.error("Failed to delete image:", err));
+
             await context.answer({ text: "Вопрос удален." });
             await sendQuestionsList(context, studyKey, page, true);
             return;
@@ -421,12 +432,21 @@ async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | und
     }
 
     const options = question.options; // Already parsed by db.getRandomQuestion
-    let imageBuffer: Buffer;
-    try {
-        imageBuffer = await renderQuestionToImage(question.question_text, options);
-    } catch (e) {
-        console.error("Failed to render image:", e);
-        return bot.api.sendMessage({ chat_id: chatId, text: "Ошибка при рендеринге вопроса." });
+    
+    let imageSource: string | Buffer;
+    
+    if (imageStorage.imageExists(question.id)) {
+        imageSource = imageStorage.getQuestionImagePath(question.id);
+    } else {
+        // Fallback: Generate on the fly and save
+        try {
+            const imageBuffer = await renderQuestionToImage(question.question_text, options);
+            await imageStorage.saveQuestionImage(question.id, imageBuffer);
+            imageSource = imageBuffer;
+        } catch (e) {
+            console.error("Failed to render image:", e);
+            return bot.api.sendMessage({ chat_id: chatId, text: "Ошибка при рендеринге вопроса." });
+        }
     }
 
     const keyboard = new InlineKeyboard();
@@ -438,9 +458,14 @@ async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | und
         if ((idx + 1) % 4 === 0) keyboard.row(); // Max 4 per row
     });
 
+    // Determine how to send the photo based on source type
+    const photo = typeof imageSource === 'string' 
+        ? MediaUpload.path(imageSource) 
+        : MediaUpload.buffer(imageSource, "question.png");
+
     return bot.api.sendPhoto({
         chat_id: chatId,
-        photo: MediaUpload.buffer(imageBuffer, "question.png"),
+        photo: photo,
         reply_markup: keyboard
     });
 }

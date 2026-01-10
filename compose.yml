@@ -5,4 +5,5 @@ services:
     env_file: .env
     volumes:
       - ./db.sqlite:/app/db.sqlite
+      - ./images:/data/images
     # Map any other necessary paths or ports if needed
