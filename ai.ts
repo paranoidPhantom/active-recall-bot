@@ -82,7 +82,10 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
         if (initialQuestions.length === 0) return [];
 
         // Step 2: Context Check
-        return await filterBadQuestions(initialQuestions, text);
+        const validatedQuestions = await filterBadQuestions(initialQuestions, text);
+
+        // Step 3: Randomize options (LLM bias fix)
+        return validatedQuestions.map(shuffleOptions);
 
     } catch (error) {
         console.error("Error generating questions:", error);
@@ -140,4 +143,22 @@ Example Output: [0, 2, 5]
         console.error("Error in context check:", e);
         return questions; // Fallback
     }
+}
+
+function shuffleOptions(q: GeneratedQuestion): GeneratedQuestion {
+    const indices = q.options.map((_, i) => i);
+    // Fisher-Yates shuffle
+    for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    
+    const newOptions = indices.map(i => q.options[i]);
+    const newCorrectIndex = indices.indexOf(q.correct_index);
+    
+    return {
+        ...q,
+        options: newOptions,
+        correct_index: newCorrectIndex
+    };
 }
