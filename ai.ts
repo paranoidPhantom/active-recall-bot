@@ -30,6 +30,13 @@ Your goal is to generate as many multiple-choice questions as necessary to cover
 - Do not limit yourself to 3 questions; generate more if the text contains enough information.
 - Ensure the questions are NOT REDUNDANT (do not ask the same thing in different ways).
 - Use your best judgment to determine the appropriate number of questions.
+
+INPUT HANDLING:
+- The user text may be partially malformed, contain "garbage" characters, or be copy-pasted LaTeX that lost formatting.
+- Do your best to interpret the intended meaning and reconstruct valid concepts.
+- If the text is completely unintelligible, return an empty array.
+- It is OK to use LaTeX notation (e.g., $x^2$, $\\sum$) in the questions and options if appropriate and correct.
+
 CRITICAL: Since these questions will be reviewed randomly later, they must be SELF-CONTAINED.
 - DO NOT use words like "this theory", "the text", "here", "above".
 - Explicitly state the subject/context in the question text itself.
@@ -72,7 +79,7 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
         if (initialQuestions.length === 0) return [];
 
         // Step 2: Context Check
-        return await filterBadQuestions(initialQuestions);
+        return await filterBadQuestions(initialQuestions, text);
 
     } catch (error) {
         console.error("Error generating questions:", error);
@@ -80,32 +87,29 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
     }
 }
 
-async function filterBadQuestions(questions: GeneratedQuestion[]): Promise<GeneratedQuestion[]> {
+async function filterBadQuestions(questions: GeneratedQuestion[], originalText: string): Promise<GeneratedQuestion[]> {
     // Only verify if we have questions
     if (questions.length === 0) return [];
 
     const prompt = `
 You are a strict quality control bot.
-You will be given a list of questions.
-Your job is to identify questions that are AMBIGUOUS, LACK CONTEXT, or refer to "the text", "this paragraph", "the author", etc. WITHOUT naming the specific subject.
+You will be given a list of questions generated from a source text.
 
-These questions will be presented to a user in isolation (randomly).
-They MUST be answerable without seeing the original source text.
+Your job is to VALIDATE each question for:
+1. CONTEXT: Questions must be SELF-CONTAINED. They must NOT refer to "the text", "this paragraph", etc. without naming the subject.
+2. CORRECTNESS: The "correct_index" must point to the actually correct option based on the source text provided below.
+3. LOGIC: The question and answer must make sense, even if the original text was partially malformed.
 
-Examples of BAD questions (Reject):
-- "What does the author say about this?" (Who is the author? What is 'this'?)
-- "Which of the following is true according to the text?" (What text?)
-- "What are the three main components mentioned?" (Mentioned where?)
+Source Text:
+"""
+${originalText}
+"""
 
-Examples of GOOD questions (Keep):
-- "What are the three main components of Newton's Second Law?"
-- "According to the dependency injection pattern, what is a service?"
+Questions to Review:
+${JSON.stringify(questions, null, 2)}
 
-Review the following questions:
-${JSON.stringify(questions.map((q, i) => ({ index: i, question: q.question })), null, 2)}
-
-Return a JSON array of integers representing the INDICES of the questions that are GOOD and SELF-CONTAINED.
-Discard any questions that lack context.
+Return a JSON array of integers representing the INDICES of the questions that are GOOD, SELF-CONTAINED, and CORRECT.
+Discard any questions that lack context or are factually wrong based on the text.
 Example Output: [0, 2, 5]
 `;
 
