@@ -17,14 +17,16 @@ interface GeneratedQuestion {
     correct_index: number;
 }
 
-export async function generateQuestions(text: string, studyKey: string): Promise<GeneratedQuestion[]> {
+export async function generateQuestions(text: string, studyKey: string, recursiveAttempt?: number): Promise<GeneratedQuestion[]> {
     if (!process.env.GROQ_API_KEY) {
         throw new Error("GROQ_API_KEY is not configured.");
     }
+    if (recursiveAttempt <= 0) { return [] }
 
     const prompt = `
 You are an expert tutor generating active recall questions.
 The user is studying: '${studyKey}'.
+Hint: ДМ stand for discrete mathematics, АиСД stands for algorithms and data structures, Линал stands for linear algebra.
 
 Your goal is to generate as many multiple-choice questions as necessary to cover the key concepts in the text below.
 - Do not limit yourself to 3 questions; generate more if the text contains enough information.
@@ -45,7 +47,9 @@ CRITICAL: Since these questions will be reviewed randomly later, they must be SE
 - Explicitly state the subject/context in the question text itself.
 - Example Bad: "What is the primary relationship in this theory?"
 - Example Good: "What is the primary relationship in Zermelo-Fraenkel set theory?"
-- LANGUAGE: The questions and options MUST be in the SAME LANGUAGE as the User Text. If the text is in Russian, generate Russian questions. If English, English.
+- LANGUAGE: The questions and options MUST be in the SAME LANGUAGE as the User Text. If the text is in Russian, generate Russian questions.
+- CORRECT: The questions must be correct. Do an extra reasoning pass to solve the question and compare your correct_index with the one you chose previously. If they don't match, do a third try and take the median of the three.
+- EXCESS: You are free to generate a few more questions than needed, extra ones will be cut out later during quality control.
 
 User Text:
 """
@@ -69,6 +73,7 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
                 { role: "system", content: "You are a helpful AI tutor that generates JSON output." },
                 { role: "user", content: prompt }
             ],
+            reasoning: { effort: "high" },
             temperature: 0.7,
         });
 
@@ -79,7 +84,7 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
         const cleanContent = content.replace(/```json/g, "").replace(/```/g, "").trim();
         
         const initialQuestions = JSON.parse(cleanContent) as GeneratedQuestion[];
-        if (initialQuestions.length === 0) return [];
+        if (initialQuestions.length === 0) return generateQuestions(text, studyKey, (recursiveAttempt ?? 3) - 1);
 
         // Step 2: Context Check
         const validatedQuestions = await filterBadQuestions(initialQuestions, text);
@@ -105,6 +110,8 @@ Your job is to VALIDATE each question for:
 1. CONTEXT: Questions must be SELF-CONTAINED. They must NOT refer to "the text", "this paragraph", etc. without naming the subject.
 2. CORRECTNESS: The "correct_index" must point to the actually correct option based on the source text provided below.
 3. LOGIC: The question and answer must make sense, even if the original text was partially malformed.
+4. SOLUTION: Try to solve the problems yourself and fact check them.
+5. UNIQUENESS: If multiple questions are essentially variations of each other, choose only the best one of them.
 
 Source Text:
 """
@@ -126,6 +133,7 @@ Example Output: [0, 2, 5]
                 { role: "system", content: "You are a quality control bot that outputs JSON arrays of indices." },
                 { role: "user", content: prompt }
             ],
+            reasoning: { effort: "high" },
             temperature: 0.1, // Low temp for strict logic
         });
 
