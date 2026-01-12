@@ -73,7 +73,6 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
                 { role: "system", content: "You are a helpful AI tutor that generates JSON output." },
                 { role: "user", content: prompt }
             ],
-            reasoning: { effort: "high" },
             temperature: 0.7,
         });
 
@@ -133,7 +132,6 @@ Example Output: [0, 2, 5]
                 { role: "system", content: "You are a quality control bot that outputs JSON arrays of indices." },
                 { role: "user", content: prompt }
             ],
-            reasoning: { effort: "high" },
             temperature: 0.1, // Low temp for strict logic
         });
 
