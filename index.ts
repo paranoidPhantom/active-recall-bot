@@ -281,7 +281,11 @@ const bot = new Bot(token)
         // del:<questionId>:<studyKey>:<page>
         if (data.startsWith("del:")) {
             const userId = context.from?.id;
-            if (userId !== adminId) {
+            if (!userId) return;
+
+            // AUTH CHECK FOR DELETING QUESTIONS
+            const isTrusted = db.isTrusted(userId) || userId === adminId;
+            if (!isTrusted) {
                  await context.answer({ text: "Только администратор может удалять вопросы.", show_alert: true });
                  return;
             }
