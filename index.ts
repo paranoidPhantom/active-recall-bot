@@ -77,9 +77,24 @@ const bot = new Bot(token)
 
         const keys = db.getAllStudyKeys();
         
-        // If there are existing keys, pick the first one as default
-        if (keys.length > 0) {
-            db.setUserStudyKey(userId, keys[0]);
+        // Default to first key if available
+        let selectedKey = keys.length > 0 ? keys[0] : null;
+
+        // Check for optional base64 argument
+        const args = context.text?.split(" ") || [];
+        if (args.length > 1) {
+            try {
+                const decoded = Buffer.from(args[1], 'base64').toString();
+                if (keys.includes(decoded)) {
+                    selectedKey = decoded;
+                }
+            } catch (e) {
+                // Ignore invalid base64
+            }
+        }
+
+        if (selectedKey) {
+            db.setUserStudyKey(userId, selectedKey);
         }
 
         const keyboard = new InlineKeyboard();
@@ -92,7 +107,7 @@ const bot = new Bot(token)
         const trustedMsg = isTrusted ? "\n\n🔑 *Вы доверенный пользователь.*\n• Используйте /study <тема> для переключения или создания темы.\n• Отправляйте текст или заметки, чтобы добавить вопросы в текущую тему.\n• Управляйте вопросами через /view и /clean." : "";
 
         const welcomeMsg = keys.length > 0 
-            ? `Добро пожаловать! \nТема по умолчанию: *${keys[0]}*.\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
+            ? `Добро пожаловать! \nТекущая тема: *${selectedKey}*.\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
             : `Добро пожаловать! Темы не найдены. \nЕсли вы админ, используйте /study <тема> и отправьте текст для создания вопросов.${trustedMsg}`;
 
         return context.send(welcomeMsg, { reply_markup: keyboard, parse_mode: "Markdown" });
