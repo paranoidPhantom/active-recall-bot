@@ -97,6 +97,8 @@ const bot = new Bot(token)
             db.setUserStudyKey(userId, selectedKey);
         }
 
+        const questionCount = selectedKey ? db.getQuestionCount(selectedKey) : 0;
+
         const keyboard = new InlineKeyboard();
         // Pagination could be needed if many keys, but simple list for now
         keys.forEach(key => {
@@ -107,7 +109,7 @@ const bot = new Bot(token)
         const trustedMsg = isTrusted ? "\n\n🔑 *Вы доверенный пользователь.*\n• Используйте /study <тема> для переключения или создания темы.\n• Отправляйте текст или заметки, чтобы добавить вопросы в текущую тему.\n• Управляйте вопросами через /view и /clean." : "";
 
         const welcomeMsg = keys.length > 0 
-            ? `Добро пожаловать! \nТекущая тема: *${selectedKey}*.\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
+            ? `Добро пожаловать! \nТекущая тема: *${selectedKey}* (${questionCount} вопросов).\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
             : `Добро пожаловать! Темы не найдены. \nЕсли вы админ, используйте /study <тема> и отправьте текст для создания вопросов.${trustedMsg}`;
 
         return context.send(welcomeMsg, { reply_markup: keyboard, parse_mode: "Markdown" });

@@ -117,6 +117,12 @@ export function getAllStudyKeys(): string[] {
   return results.map(r => r.study_key);
 }
 
+export function getQuestionCount(studyKey: string): number {
+  const query = db.query("SELECT COUNT(*) as count FROM questions WHERE study_key = $studyKey");
+  const result = query.get({ $studyKey: studyKey }) as { count: number };
+  return result ? result.count : 0;
+}
+
 export function saveQuestion(studyKey: string, question: string, options: string[], correctIndex: number): number {
   const query = db.query(`
     INSERT INTO questions (study_key, question_text, options, correct_index)
