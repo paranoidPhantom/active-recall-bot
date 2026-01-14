@@ -215,12 +215,12 @@ export function getRandomQuestion(studyKey: string, userId: number) {
   // First try to find questions never used BY THIS USER
   // Sort by approval rate: (thumbs_up + 1) / (thumbs_up + thumbs_down + 2)
   let query = db.query(`
-    SELECT q.*, 
+    SELECT q.*,
       (CAST(q.thumbs_up AS REAL) + 1.0) / (CAST(q.thumbs_up AS REAL) + CAST(q.thumbs_down AS REAL) + 2.0) as weight
     FROM questions q
     LEFT JOIN user_progress up ON q.id = up.question_id AND up.user_id = $userId
     WHERE q.study_key = $studyKey AND up.last_used_at IS NULL
-    ORDER BY weight DESC
+    ORDER BY weight DESC, RANDOM()
     LIMIT 1
   `);
   
