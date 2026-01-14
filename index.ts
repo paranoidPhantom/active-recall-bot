@@ -185,7 +185,11 @@ const bot = new Bot(token)
         await sendQuestionsList(context, studyKey, 1);
     })
 
-    .command("ask", (context) => sendRandomQuestion(bot, context.chat.id, context.from?.id))
+    .command("ask", (context) => {
+        const args = context.text?.split(" ") || [];
+        const questionId = args[1] ? parseInt(args[1]) : undefined;
+        return sendRandomQuestion(bot, context.chat.id, context.from?.id, questionId);
+    })
 
     .on("message", async (context) => {
         if (!context.text) return;
@@ -465,7 +469,7 @@ const bot = new Bot(token)
 
 
 // Helper to send a question
-async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | undefined) {
+async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | undefined, specificQuestionId?: number) {
     if (!userId) return;
 
     const studyKey = db.getUserStudyKey(userId);
@@ -473,7 +477,16 @@ async function sendRandomQuestion(bot: Bot, chatId: number, userId: number | und
         return bot.api.sendMessage({ chat_id: chatId, text: "Тема не выбрана. Используйте /study <тема>." });
     }
 
-    const question = db.getRandomQuestion(studyKey, userId);
+    let question;
+    if (specificQuestionId && !isNaN(specificQuestionId)) {
+        question = db.getQuestionById(specificQuestionId);
+        if (!question) {
+            return bot.api.sendMessage({ chat_id: chatId, text: `Вопрос #${specificQuestionId} не найден.` });
+        }
+    } else {
+        question = db.getRandomQuestion(studyKey, userId);
+    }
+
     if (!question) {
         return bot.api.sendMessage({ chat_id: chatId, text: `Вопросов по теме '${studyKey}' не найдено. Отправьте мне текст для генерации (если есть права)!` });
     }

@@ -194,6 +194,18 @@ export function getQuestionStats(questionId: number) {
   return result || { thumbs_up: 0, thumbs_down: 0 };
 }
 
+export function getQuestionById(questionId: number) {
+  const query = db.query("SELECT * FROM questions WHERE id = $id");
+  const result = query.get({ $id: questionId }) as any;
+  if (result) {
+    return {
+      ...result,
+      options: JSON.parse(result.options) as string[]
+    };
+  }
+  return null;
+}
+
 export function getQuestions(studyKey: string, page: number, pageSize: number = 5) {
   const offset = (page - 1) * pageSize;
   const query = db.query(`
