@@ -78,7 +78,7 @@ const bot = new Bot(token)
         const keys = db.getAllStudyKeys();
         
         // Default to first key if available
-        let selectedKey = keys.length > 0 ? keys[0] : null;
+        let selectedKey = db.getUserStudyKey(userId) ?? keys[0];
 
         // Check for optional base64 argument
         const args = context.text?.split(" ") || [];
