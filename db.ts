@@ -50,6 +50,22 @@ db.run(`
   );
 `);
 
+export function renameStudyKey(oldKey: string, newKey: string) {
+  db.transaction(() => {
+    // Update questions
+    db.query("UPDATE questions SET study_key = $newKey WHERE study_key = $oldKey").run({
+      $newKey: newKey,
+      $oldKey: oldKey
+    });
+
+    // Update users' current selection so they don't get lost
+    db.query("UPDATE users SET current_study_key = $newKey WHERE current_study_key = $oldKey").run({
+      $newKey: newKey,
+      $oldKey: oldKey
+    });
+  })();
+}
+
 export function setUserStudyKey(userId: number, key: string) {
   const query = db.query(`
     INSERT INTO users (id, current_study_key, is_trusted) 

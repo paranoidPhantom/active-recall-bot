@@ -128,6 +128,32 @@ const bot = new Bot(token)
         return context.send(`Вы уверены, что хотите удалить ВСЕ вопросы по теме '${studyKey}'?`, { reply_markup: keyboard });
     })
 
+    .command("rename", (context) => {
+        const userId = context.from?.id;
+        if (!userId) return;
+
+        if (userId !== adminId) {
+            return context.send("Эта команда доступна только главному администратору.");
+        }
+
+        const newName = context.text?.split(" ").slice(1).join(" ");
+        if (!newName) {
+            return context.send("Использование: /rename <новое_название>");
+        }
+
+        const currentKey = db.getUserStudyKey(userId);
+        if (!currentKey) {
+            return context.send("Сначала выберите тему, которую хотите переименовать, через /study.");
+        }
+
+        if (currentKey === newName) {
+            return context.send("Новое название совпадает с текущим.");
+        }
+
+        db.renameStudyKey(currentKey, newName);
+        return context.send(`✅ Тема '${currentKey}' успешно переименована в '${newName}'.`);
+    })
+
     .command("view", async (context) => {
         const userId = context.from?.id;
         if (!userId) return;
