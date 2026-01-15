@@ -50,6 +50,15 @@ db.run(`
   );
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS leaderboard_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    study_key TEXT NOT NULL,
+    leaderboard_data TEXT NOT NULL, -- JSON object with usernames as keys, counts as values
+    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+  );
+`);
+
 export function renameStudyKey(oldKey: string, newKey: string) {
   db.transaction(() => {
     // Update questions
@@ -243,6 +252,104 @@ export function deleteQuestion(questionId: number) {
   db.run("DELETE FROM questions WHERE id = $id", { $id: questionId });
   db.run("DELETE FROM votes WHERE question_id = $id", { $id: questionId });
   db.run("DELETE FROM user_progress WHERE question_id = $id", { $id: questionId });
+}
+
+export function generateLeaderboards() {
+  const studyKeys = getAllStudyKeys();
+
+  for (const studyKey of studyKeys) {
+    // Count user attempts per topic
+    const userCounts = new Map<number, number>();
+
+    const progressQuery = db.query(`
+      SELECT p.user_id
+      FROM user_progress p
+      JOIN questions q ON p.question_id = q.id
+      WHERE q.study_key = $studyKey
+    `);
+
+    const progressResults = progressQuery.all({ $studyKey: studyKey }) as { user_id: number }[];
+
+    // Count attempts per user
+    for (const row of progressResults) {
+      const currentCount = userCounts.get(row.user_id) || 0;
+      userCounts.set(row.user_id, currentCount + 1);
+    }
+
+    // Map user IDs to usernames
+    const leaderboard: Record<string, number> = {};
+
+    for (const [userId, count] of userCounts.entries()) {
+      // Look up username
+      const usernameQuery = db.query("SELECT username FROM usernames WHERE user_id = $userId");
+      const usernameResult = usernameQuery.get({ $userId: userId }) as { username: string } | null;
+
+      const key = usernameResult ? usernameResult.username : `user_${userId}`;
+      leaderboard[key] = count;
+    }
+
+    // Store leaderboard
+    const insertQuery = db.query(`
+      INSERT INTO leaderboard_history (study_key, leaderboard_data)
+      VALUES ($studyKey, $leaderboardData)
+    `);
+
+    insertQuery.run({
+      $studyKey: studyKey,
+      $leaderboardData: JSON.stringify(leaderboard)
+    });
+  }
+}
+
+export function getLatestLeaderboards() {
+  // Get the latest leaderboard entry for each study key
+  const query = db.query(`
+    SELECT lh1.*
+    FROM leaderboard_history lh1
+    WHERE lh1.id = (
+      SELECT MAX(id)
+      FROM leaderboard_history lh2
+      WHERE lh2.study_key = lh1.study_key
+    )
+    ORDER BY lh1.study_key ASC
+  `);
+
+  const results = query.all() as {
+    id: number,
+    study_key: string,
+    leaderboard_data: string,
+    created_at: number
+  }[];
+
+  return results.map(row => ({
+    studyKey: row.study_key,
+    leaderboard: JSON.parse(row.leaderboard_data) as Record<string, number>,
+    createdAt: new Date(row.created_at * 1000)
+  }));
+}
+
+export function getLeaderboardHistory(studyKey: string, limit: number = 10) {
+  const query = db.query(`
+    SELECT * FROM leaderboard_history
+    WHERE study_key = $studyKey
+    ORDER BY created_at DESC
+    LIMIT $limit
+  `);
+
+  const results = query.all({
+    $studyKey: studyKey,
+    $limit: limit
+  }) as {
+    id: number,
+    leaderboard_data: string,
+    created_at: number
+  }[];
+
+  return results.map(row => ({
+    id: row.id,
+    leaderboard: JSON.parse(row.leaderboard_data) as Record<string, number>,
+    createdAt: new Date(row.created_at * 1000)
+  }));
 }
 
 export function getRandomQuestion(studyKey: string, userId: number) {

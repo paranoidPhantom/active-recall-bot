@@ -108,8 +108,35 @@ const bot = new Bot(token)
         const isTrusted = db.isTrusted(userId) || userId === adminId;
         const trustedMsg = isTrusted ? "\n\n🔑 *Вы доверенный пользователь.*\n• Используйте /study <тема> для переключения или создания темы.\n• Отправляйте текст или заметки, чтобы добавить вопросы в текущую тему.\n• Управляйте вопросами через /view и /clean." : "";
 
-        const welcomeMsg = keys.length > 0 
-            ? `Добро пожаловать! \nТекущая тема: *${selectedKey}* (${questionCount} вопросов).\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
+        // Get leaderboard for current topic
+        let leaderboardMsg = "";
+        if (selectedKey) {
+          try {
+            const leaderboards = db.getLatestLeaderboards();
+            const currentLeaderboard = leaderboards.find(lb => lb.studyKey === selectedKey);
+
+            if (currentLeaderboard && Object.keys(currentLeaderboard.leaderboard).length > 0) {
+              const entries = Object.entries(currentLeaderboard.leaderboard)
+                .sort((a, b) => b[1] - a[1]) // Sort by count descending
+                .slice(0, 5); // Top 5 only
+
+              leaderboardMsg = "\n\n🏆 *Топ игроков:*\n";
+              entries.forEach(([username, count], index) => {
+                const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "▫️";
+                // Russian pluralization for вопрос
+                const questionWord = count === 1 ? "вопрос" :
+                                   count >= 2 && count <= 4 ? "вопроса" :
+                                   "вопросов";
+                leaderboardMsg += `${medal} ${username}: ${count} ${questionWord}\n`;
+              });
+            }
+          } catch (error) {
+            console.error("Error fetching leaderboard:", error);
+          }
+        }
+
+        const welcomeMsg = keys.length > 0
+            ? `Добро пожаловать! \nТекущая тема: *${selectedKey}* (${questionCount} вопросов).${leaderboardMsg}\n\nИспользуйте /ask чтобы начать тренировку, или выберите другую тему ниже:${trustedMsg}`
             : `Добро пожаловать! Темы не найдены. \nЕсли вы админ, используйте /study <тема> и отправьте текст для создания вопросов.${trustedMsg}`;
 
         return context.send(welcomeMsg, { reply_markup: keyboard, parse_mode: "Markdown" });
@@ -579,6 +606,25 @@ if (process.env.CLEAN_RIGHT_ANSWERS === "true") {
 }
 
 bot.start();
+
+// Start leaderboard generation job that runs every minute
+console.log("🔄 Starting leaderboard generation scheduler (runs every minute)...");
+setInterval(() => {
+  try {
+    console.log("📊 Generating leaderboards...");
+    db.generateLeaderboards();
+  } catch (error) {
+    console.error("Error generating leaderboards:", error);
+  }
+}, 60 * 1000); // 60 seconds = 1 minute
+
+// Generate initial leaderboards on startup
+try {
+  db.generateLeaderboards();
+  console.log("📊 Initial leaderboards generated");
+} catch (error) {
+  console.error("Error generating initial leaderboards:", error);
+}
 
 function escapeHtml(unsafe: string): string {
     return unsafe
