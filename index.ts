@@ -127,7 +127,9 @@ const bot = new Bot(token)
                 const questionWord = count === 1 ? "вопрос" :
                                    count >= 2 && count <= 4 ? "вопроса" :
                                    "вопросов";
-                leaderboardMsg += `${medal} ${username}: ${count} ${questionWord}\n`;
+                // Escape Markdown special characters in username
+                const escapedUsername = username.replace(/[\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!]/g, "\\$&");
+                leaderboardMsg += `${medal} ${escapedUsername}: ${count} ${questionWord}\n`;
               });
             }
           } catch (error) {
