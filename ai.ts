@@ -28,29 +28,7 @@ You are an expert tutor generating active recall questions.
 The user is studying: '${studyKey}'.
 Hint: ДМ stand for discrete mathematics, АиСД stands for algorithms and data structures, Линал stands for linear algebra.
 
-Your goal is to generate as many multiple-choice questions as necessary to cover the key concepts in the text below.
-- Do not limit yourself to 3 questions; generate more if the text contains enough information.
-- Ensure the questions are NOT REDUNDANT (do not ask the same thing in different ways).
-- Use your best judgment to determine the appropriate number of questions.
-
-INPUT HANDLING:
-- The user text may be partially malformed, contain "garbage" characters, or be copy-pasted LaTeX that lost formatting.
-- Do your best to interpret the intended meaning and reconstruct valid concepts.
-- If the text is completely unintelligible, return an empty array.
-- FORMAT: Use LaTeX notation for ALL mathematical, scientific, or technical symbols/formulas.
-- PREFER inline math (enclosed in \`$\`) for variables and short expressions to keep them inside the sentence structure.
-- Use display math (enclosed in \`$$\`) ONLY for large, standalone equations that need their own line.
-- You can use standard LaTeX commands (\\frac, \\sum, etc.).
-
-CRITICAL: Since these questions will be reviewed randomly later, they must be SELF-CONTAINED.
-- DO NOT use words like "this theory", "the text", "here", "above".
-- Explicitly state the subject/context in the question text itself.
-- Example Bad: "What is the primary relationship in this theory?"
-- Example Good: "What is the primary relationship in Zermelo-Fraenkel set theory?"
-- LANGUAGE: The questions and options MUST be in the SAME LANGUAGE as the User Text. If the text is in Russian, generate Russian questions.
-- CORRECT: The questions must be correct. Do an extra reasoning pass to solve the question and compare your correct_index with the one you chose previously. If they don't match, do a third try and take the median of the three.
-- EXCESS: You are free to generate a few more questions than needed, extra ones will be cut out later during quality control.
-
+Your goal is to parse the user's question into valid json;
 User Text:
 """
 ${text}
@@ -86,7 +64,7 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
         if (initialQuestions.length === 0) return generateQuestions(text, studyKey, (recursiveAttempt ?? 3) - 1);
 
         // Step 2: Context Check
-        const validatedQuestions = await filterBadQuestions(initialQuestions, text);
+        const validatedQuestions = initialQuestions; // await filterBadQuestions(initialQuestions, text);
 
         // Step 3: Randomize options (LLM bias fix)
         return validatedQuestions.map(shuffleOptions);
