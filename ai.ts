@@ -46,7 +46,7 @@ Return ONLY a raw JSON array (no markdown code blocks) of objects with this stru
 
     try {
         const completion = await openai.chat.completions.create({
-            model: "moonshotai/kimi-k2-instruct-0905",
+            model: "openai/gpt-oss-120b",
             messages: [
                 { role: "system", content: "You are a helpful AI tutor that generates JSON output." },
                 { role: "user", content: prompt }

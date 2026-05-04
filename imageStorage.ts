@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
-export const IMAGE_STORAGE_ROOT = '/data/images';
+export const IMAGE_STORAGE_ROOT = process.env.IMAGE_STORAGE_ROOT ?? '/data/images';
 
 // Ensure storage directory exists
 if (!existsSync(IMAGE_STORAGE_ROOT)) {
