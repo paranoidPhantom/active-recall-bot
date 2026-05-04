@@ -44,8 +44,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
-COPY package.json ./
-COPY bun.lock ./
+COPY ./package.json ./
+COPY ./bun.lock ./
 
 # Install dependencies
 RUN bun install
