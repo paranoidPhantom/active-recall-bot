@@ -112,8 +112,7 @@ const bot = new Bot(token)
         let leaderboardMsg = "";
         if (selectedKey) {
           try {
-            const leaderboards = db.getLatestLeaderboards();
-            const currentLeaderboard = leaderboards.find(lb => lb.studyKey === selectedKey);
+            const currentLeaderboard = db.getLatestLeaderboardForStudyKey(selectedKey);
 
             if (currentLeaderboard && Object.keys(currentLeaderboard.leaderboard).length > 0) {
               const entries = Object.entries(currentLeaderboard.leaderboard)

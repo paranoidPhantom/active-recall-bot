@@ -59,6 +59,23 @@ db.run(`
   );
 `);
 
+// Keep only latest leaderboard row per study key (lean mode)
+db.run(`
+  DELETE FROM leaderboard_history
+  WHERE id NOT IN (
+    SELECT MAX(id)
+    FROM leaderboard_history
+    GROUP BY study_key
+  )
+`);
+
+// Indexes
+// Unique index enforces one leaderboard row per topic for UPSERT.
+db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_history_study_key_unique ON leaderboard_history(study_key);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_leaderboard_history_study_key_id ON leaderboard_history(study_key, id);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_questions_study_key ON questions(study_key);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_user_progress_question_id ON user_progress(question_id);`);
+
 export function renameStudyKey(oldKey: string, newKey: string) {
   db.transaction(() => {
     // Update questions
@@ -258,9 +275,6 @@ export function generateLeaderboards() {
   const studyKeys = getAllStudyKeys();
 
   for (const studyKey of studyKeys) {
-    // Count user attempts per topic
-    const userCounts = new Map<number, number>();
-
     const progressQuery = db.query(`
       SELECT p.user_id
       FROM user_progress p
@@ -271,47 +285,83 @@ export function generateLeaderboards() {
     const progressResults = progressQuery.all({ $studyKey: studyKey }) as { user_id: number }[];
 
     // Count attempts per user
+    const userCounts = new Map<number, number>();
     for (const row of progressResults) {
       const currentCount = userCounts.get(row.user_id) || 0;
       userCounts.set(row.user_id, currentCount + 1);
     }
 
-    // Map user IDs to usernames
+    // Preload usernames once per topic to avoid per-user queries
+    const usernameRows = db.query(`
+      SELECT user_id, username
+      FROM usernames
+      WHERE user_id IN (
+        SELECT DISTINCT p.user_id
+        FROM user_progress p
+        JOIN questions q ON p.question_id = q.id
+        WHERE q.study_key = $studyKey
+      )
+    `).all({ $studyKey: studyKey }) as { user_id: number, username: string }[];
+
+    const usernameById = new Map<number, string>();
+    for (const row of usernameRows) {
+      usernameById.set(row.user_id, row.username);
+    }
+
     const leaderboard: Record<string, number> = {};
-
     for (const [userId, count] of userCounts.entries()) {
-      // Look up username
-      const usernameQuery = db.query("SELECT username FROM usernames WHERE user_id = $userId");
-      const usernameResult = usernameQuery.get({ $userId: userId }) as { username: string } | null;
-
-      const key = usernameResult ? usernameResult.username : `user_${userId}`;
+      const key = usernameById.get(userId) ?? `user_${userId}`;
       leaderboard[key] = count;
     }
 
-    // Store leaderboard
-    const insertQuery = db.query(`
-      INSERT INTO leaderboard_history (study_key, leaderboard_data)
-      VALUES ($studyKey, $leaderboardData)
-    `);
-
-    insertQuery.run({
+    db.query(`
+      INSERT INTO leaderboard_history (study_key, leaderboard_data, created_at)
+      VALUES ($studyKey, $leaderboardData, strftime('%s', 'now'))
+      ON CONFLICT(study_key) DO UPDATE SET
+        leaderboard_data = excluded.leaderboard_data,
+        created_at = excluded.created_at
+    `).run({
       $studyKey: studyKey,
       $leaderboardData: JSON.stringify(leaderboard)
     });
   }
 }
 
+export function getLatestLeaderboardForStudyKey(studyKey: string) {
+  const row = db.query(`
+    SELECT id, study_key, leaderboard_data, created_at
+    FROM leaderboard_history
+    WHERE study_key = $studyKey
+    ORDER BY id DESC
+    LIMIT 1
+  `).get({ $studyKey: studyKey }) as {
+    id: number,
+    study_key: string,
+    leaderboard_data: string,
+    created_at: number
+  } | null;
+
+  if (!row) return null;
+
+  return {
+    studyKey: row.study_key,
+    leaderboard: JSON.parse(row.leaderboard_data) as Record<string, number>,
+    createdAt: new Date(row.created_at * 1000)
+  };
+}
+
 export function getLatestLeaderboards() {
-  // Get the latest leaderboard entry for each study key
   const query = db.query(`
-    SELECT lh1.*
-    FROM leaderboard_history lh1
-    WHERE lh1.id = (
-      SELECT MAX(id)
-      FROM leaderboard_history lh2
-      WHERE lh2.study_key = lh1.study_key
-    )
-    ORDER BY lh1.study_key ASC
+    SELECT lh.id, lh.study_key, lh.leaderboard_data, lh.created_at
+    FROM leaderboard_history lh
+    JOIN (
+      SELECT study_key, MAX(id) AS max_id
+      FROM leaderboard_history
+      GROUP BY study_key
+    ) latest
+      ON latest.study_key = lh.study_key
+     AND latest.max_id = lh.id
+    ORDER BY lh.study_key ASC
   `);
 
   const results = query.all() as {
@@ -326,6 +376,35 @@ export function getLatestLeaderboards() {
     leaderboard: JSON.parse(row.leaderboard_data) as Record<string, number>,
     createdAt: new Date(row.created_at * 1000)
   }));
+}
+
+export function cleanupLeaderboardHistory(keepPerStudyKey: number = 1) {
+  if (keepPerStudyKey <= 1) {
+    const result = db.query(`
+      DELETE FROM leaderboard_history
+      WHERE id NOT IN (
+        SELECT MAX(id)
+        FROM leaderboard_history
+        GROUP BY study_key
+      )
+    `).run();
+
+    return result.changes;
+  }
+
+  const result = db.query(`
+    DELETE FROM leaderboard_history
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id,
+               ROW_NUMBER() OVER (PARTITION BY study_key ORDER BY id DESC) AS rn
+        FROM leaderboard_history
+      ) ranked
+      WHERE ranked.rn > $keepPerStudyKey
+    )
+  `).run({ $keepPerStudyKey: keepPerStudyKey });
+
+  return result.changes;
 }
 
 export function getLeaderboardHistory(studyKey: string, limit: number = 10) {
